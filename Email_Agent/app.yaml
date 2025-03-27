@@ -1,0 +1,21 @@
+
+# app.yaml for Google Cloud App Engine deployment
+runtime: python39
+entrypoint: gunicorn -b :$PORT api_flask:app
+
+env_variables:
+  PYTHONUNBUFFERED: 1
+
+handlers:
+- url: /.*
+  script: auto
+
+automatic_scaling:
+  min_instances: 1
+  max_instances: 5
+  min_idle_instances: 1
+  max_idle_instances: 1
+  min_pending_latency: 30ms
+  max_pending_latency: 100ms
+  target_cpu_utilization: 0.65
+    

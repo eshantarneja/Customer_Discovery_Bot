@@ -4,10 +4,10 @@ from langchain.chains import LLMChain
 import os
 from secrets import get_secret
 from dotenv import load_dotenv
-from contacts import Contact
+from Classes.contacts import Contact
 
 class EmailAgent:
-    def __init__(self):
+    def __init__(self, email_template=None):
         # Load environment variables
         load_dotenv()
         
@@ -34,29 +34,40 @@ class EmailAgent:
             prompt=experience_prompt
         )
         
-        # Initialize email chain
+        # Initialize email chain with default or custom template
+        default_template = """
+        Please stick to the following format only! Do not deviate from it:
+
+
+        Hello [Insert First Name],
+
+        I am a current student at Harvard and I am interested in learning more about grocery store operations. Specifically, [Insert whatever they do at the company as what I am interested in learning about].
+
+        [Insert a explanation of why their background is an interesting profile for me to talk to and learn more about]
+         
+        Would you be open to a quick call sometime after 12p this week so I can learn more about your experiences?
+
+        Best,
+        Bill
+        """
+        
+        # Use the provided template or fall back to the default
+        template_to_use = email_template if email_template else default_template
+        
         email_prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an AI assistant that writes concise emails. You speak the language of the industry like a 15 year veteran.Make sure your writing does not sound like chatGPT."),
-            ("user", """
-             Please stick to the following format only! Do not deviate from it:
-
-
-            Hello [Insert First Name],
-
-            I am a current student at HBS and have been working on a solution for the food distribution industry. Our product automates data entry into CRMs/ERPs, helping roles like yours as [insert their position at company if known, otherwise re-do the email to make sesne without it] at {company} save time, reduce manual data entry errors, and improve visibility into order statuses.
-
-            This could be particularly helpful in [explain why it could be helpful for their job given their role and responsibilities, e.g., “managing multiple accounts and ensuring timely order tracking without relying on manual updates”]. By streamlining these processes, it allows you to focus more on high-impact tasks and less on repetitive, time-consuming work.
-
-            Would you be open to answering a few questions about how your team currently handles this process? Your insights would be incredibly valuable.
-
-            Best,
-            Bill
-             
-             Please use the following information to help with the pithy explanation. \n\n{experiences}
-             Please make sure the email does not sound like AI wrote it.
-             Please use {name} and {company} in the email.
-             
-             """)
+            ("system", "You are a script that follows explicit instructions to fill in a template. You DO NOT add ANY content that is not requested. You DO NOT create your own template or modify the given template structure in any way."),
+            ("user", f"""
+            COPY AND PASTE THE FOLLOWING TEMPLATE EXACTLY AS IT IS, but ONLY replace the parts in [brackets] with appropriate content based on the person's information. DO NOT change ANY other text. DO NOT add ANY content outside the specified placeholders. DO NOT create your own format or structure:
+            
+            {template_to_use}
+            
+            Person information:
+            - Name: {{name}}
+            - Company: {{company}}
+            - Background information: {{experiences}}
+            
+            CRITICAL INSTRUCTION: Your ONLY job is to replace [bracketed text] with appropriate content based on the person's information. DO NOT modify ANY other part of the template. DO NOT add signatures, additional greetings, or any other text not explicitly specified in the template.
+            """)
         ])
         
         self.email_chain = LLMChain(

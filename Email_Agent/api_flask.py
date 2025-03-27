@@ -1,81 +1,260 @@
-from flask import Flask, request, jsonify
-from email_agent import EmailAgent
-from contacts import Contact
-from sender import Sender
-from secrets import get_secret
-from web_agent import tavily_context_search
-from email_graph import run_email_workflow
-from langchain_openai import ChatOpenAI
+import os
+import json
+import random
+import string
+from typing import List, Dict, Any
+from datetime import datetime
+from flask import Flask, request, jsonify, send_file
+import tempfile
 
+# Import application modules with correct paths
+from Classes.contacts import Contact
+from Graph.email_agent import EmailAgent
+from CSV_Export.file_manager import save_emails_to_csv
+from GoogleSheets.sheets_manager import read_contacts_from_sheets, update_sheet_with_contact_info
+from Helper.contact_processor import process_all_contacts
+from Email_Sender.email import send_contacts_email
+
+# Initialize Flask app
 app = Flask(__name__)
 
-def initialize_llm():
-    openai_api_key = get_secret("OpenAPI_KEY")
-    return ChatOpenAI(temperature=0.7, model="gpt-4", openai_api_key=openai_api_key)
+# Global variables
+SPREADSHEET_ID = '1xyGHQBRn5dfFG3utdAifs2ubMJtolVK9Qoy9YJGoheg'
+RANGE_NAME = 'Sheet1!A1:I'
 
-def search_web(contact):
-    context = {}
-    context['company_info'] = tavily_context_search(contact.company)
-    context['person_info'] = tavily_context_search(contact.name)
-    return context
+# Create a custom JSON encoder to handle Contact objects
+class ContactJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Contact):
+            contact_dict = {
+                'full_name': getattr(obj, 'full_name', ''),
+                'work_email': getattr(obj, 'work_email', ''),
+                'company_name': getattr(obj, 'company_name', ''),
+                'company_domain': getattr(obj, 'company_domain', ''),
+                'job_title': getattr(obj, 'job_title', ''),
+                'LinkedIn': getattr(obj, 'LinkedIn', '')
+            }
+            
+            # Safely add optional attributes
+            if hasattr(obj, 'draft_email'):
+                contact_dict['draft_email'] = obj.draft_email
+            
+            if hasattr(obj, 'context'):
+                contact_dict['context_length'] = len(obj.context) if obj.context else 0
+                
+            return contact_dict
+        return super().default(obj)
 
-def update_context(email_agent, web_context):
-    raw_context = web_context['company_info'] + "\n" + web_context['person_info']
-    return email_agent.extract_relevant_content(raw_context)
+# Register the custom encoder with Flask
+app.json_encoder = ContactJSONEncoder
 
-@app.route('/generate-email', methods=['POST'])
-def generate_email():
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for Google Cloud deployment"""
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
+
+@app.route('/contacts', methods=['GET'])
+def get_contacts():
+    """Get contacts from Google Sheets"""
     try:
+        limit = request.args.get('limit', default=100, type=int)
+        contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=limit)
+        return jsonify({
+            'status': 'success',
+            'count': len(contacts),
+            'contacts': contacts
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/process-contacts', methods=['POST'])
+def process_contacts():
+    """Process contacts and generate emails"""
+    try:
+        import asyncio
         data = request.json
         
-        # Initialize LLM
-        llm = initialize_llm()
+        # Get parameters from request
+        is_test = data.get('is_test', True)  # Default to test mode for safety
+        batch_size = data.get('batch_size', 5)
+        contact_limit = data.get('contact_limit', 100)
+        email_template = data.get('email_template')
         
-        # Create Contact object
-        contact_data = data.get('contact')
-        if not contact_data:
-            return jsonify({"error": "Contact data is required"}), 400
-        contact = Contact(contact_data)
+        # Optional: Use provided contacts or fetch from sheets
+        provided_contacts = data.get('contacts')
+        if provided_contacts:
+            # Convert dictionary to Contact objects
+            contacts = [Contact(contact_dict) for contact_dict in provided_contacts]
+        else:
+            # Fetch from Google Sheets
+            contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
         
-        # Create Sender object
-        sender_data = data.get('sender')
-        if not sender_data:
-            return jsonify({"error": "Sender data is required"}), 400
-            
-        sender = Sender(
-            name=sender_data.get('name'),
-            resume=sender_data.get('resume'),
-            career_interest=sender_data.get('career_interest'),
-            key_accomplishments=sender_data.get('key_accomplishments', []),
-            llm=llm
-        )
+        # Process contacts - using asyncio.run to handle async function
+        processed_contacts = asyncio.run(process_all_contacts(contacts, batch_size, email_template))
         
-        # Process sender information
-        sender.process_relevant_content()
+        # Save to CSV file
+        csv_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+        csv_path = csv_file.name
+        csv_file.close()  # Close so we can write to it
         
-        # Create EmailAgent
-        email_agent = EmailAgent(contact, sender)
+        # Use existing function to create CSV
+        output_path = create_contact_csv(processed_contacts, csv_path)
         
-        # Search web and process context
-        web_context = search_web(contact)
-        web_relevant_content = update_context(email_agent, web_context)
-        
-        # Run email workflow
-        final_state = run_email_workflow(
-            email_agent=email_agent,
-            sender_info=sender.get_relevant_content(),
-            context=web_relevant_content
-        )
+        # Update Google Sheet if not in test mode
+        if not is_test and processed_contacts:
+            update_sheet_with_contact_info(SPREADSHEET_ID, RANGE_NAME, processed_contacts)
         
         return jsonify({
-            "draft": final_state["draft"],
-            "critique": final_state["critique"],
-            "revision_count": final_state["revision_count"],
-            "web_context": web_relevant_content
+            'status': 'success',
+            'mode': 'TEST' if is_test else 'PRODUCTION',
+            'processed_count': len(processed_contacts),
+            'contacts': processed_contacts,
+            'csv_path': output_path
         })
         
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/process-and-email', methods=['POST'])
+def process_and_email():
+    """Process contacts and email the results"""
+    try:
+        import asyncio
+        data = request.json
+        
+        # Get parameters from request
+        is_test = data.get('is_test', True)  # Default to test mode for safety
+        batch_size = data.get('batch_size', 5)
+        contact_limit = data.get('contact_limit', 100)
+        email_template = data.get('email_template')
+        recipient_email = data.get('recipient_email')
+        
+        if not recipient_email:
+            return jsonify({'status': 'error', 'message': 'Recipient email is required'}), 400
+        
+        # Fetch contacts from Google Sheets
+        contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
+        
+        # Process contacts - using asyncio.run to handle async function
+        processed_contacts = asyncio.run(process_all_contacts(contacts, batch_size, email_template))
+        
+        # Update Google Sheet if not in test mode
+        if not is_test and processed_contacts:
+            update_sheet_with_contact_info(SPREADSHEET_ID, RANGE_NAME, processed_contacts)
+        
+        # Send email with processed contacts
+        email_sent = send_contacts_email(
+            contacts=processed_contacts,
+            recipient_email=recipient_email,
+            subject=data.get('email_subject'),
+            body=data.get('email_body')
+        )
+        
+        return jsonify({
+            'status': 'success' if email_sent else 'error',
+            'message': 'Email sent successfully' if email_sent else 'Failed to send email',
+            'mode': 'TEST' if is_test else 'PRODUCTION',
+            'processed_count': len(processed_contacts),
+            'contacts': processed_contacts
+        })
+        
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/download-csv/<filename>', methods=['GET'])
+def download_csv(filename):
+    """Download a previously generated CSV file"""
+    try:
+        logs_dir = 'logs'
+        file_path = os.path.join(logs_dir, filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({'status': 'error', 'message': 'File not found'}), 404
+            
+        return send_file(file_path, as_attachment=True, download_name=filename)
+        
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# Helper to generate a random string
+def generate_random_string(length=10):
+    return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(length))
+
+# Add app.yaml configuration for Google Cloud
+def create_app_yaml():
+    """Create app.yaml file for Google Cloud deployment"""
+    yaml_content = """
+# app.yaml for Google Cloud App Engine deployment
+runtime: python39
+entrypoint: gunicorn -b :$PORT api_flask:app
+
+env_variables:
+  PYTHONUNBUFFERED: 1
+
+handlers:
+- url: /.*
+  script: auto
+
+automatic_scaling:
+  min_instances: 1
+  max_instances: 5
+  min_idle_instances: 1
+  max_idle_instances: 1
+  min_pending_latency: 30ms
+  max_pending_latency: 100ms
+  target_cpu_utilization: 0.65
+    """
+    
+    with open('app.yaml', 'w') as f:
+        f.write(yaml_content)
+    
+    print("Created app.yaml file for Google Cloud deployment")
+
+# Create requirements.txt file for Google Cloud deployment
+def create_requirements_txt():
+    """Create requirements.txt file for Google Cloud deployment"""
+    requirements = """
+# Requirements for Google Cloud deployment
+flask==2.0.1
+gunicorn==20.1.0
+asyncio==3.4.3
+python-dotenv==0.19.0
+google-api-python-client==2.23.0
+google-auth==2.3.0
+google-auth-httplib2==0.1.0
+langchain==0.0.267
+langchain-openai==0.0.5
+pydantic==1.10.8
+tavily-python==0.1.9
+    """
+    
+    with open('requirements.txt', 'w') as f:
+        f.write(requirements)
+    
+    print("Created requirements.txt file for Google Cloud deployment")
+
+# Helper function to create a Contact CSV without sending an email
+def create_contact_csv(contacts: List[Contact], output_file: str = None) -> str:
+    """Create a CSV file with contact information"""
+    # Create 'logs' directory if it doesn't exist and output_file is not specified
+    if not output_file:
+        logs_dir = 'logs'
+        if not os.path.exists(logs_dir):
+            os.makedirs(logs_dir)
+        output_file = os.path.join(logs_dir, f'contacts_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv')
+    
+    try:
+        save_emails_to_csv(contacts)  # Use existing function
+        return output_file
+    except Exception as e:
+        print(f"Error creating CSV file: {str(e)}")
+        return ""
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    # Create deployment files
+    create_app_yaml()
+    create_requirements_txt()
+    
+    # Start Flask app
+    print("Starting Flask API server on port 5001...")
+    app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5001)))
