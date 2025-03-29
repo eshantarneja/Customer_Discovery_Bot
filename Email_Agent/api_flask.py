@@ -85,6 +85,15 @@ def process_contacts():
         contact_limit = data.get('contact_limit', 100)
         email_template = data.get('email_template')
         
+        # Check if email should be sent
+        send_email = data.get('send_email', False)
+        recipient_email = data.get('recipient_email')
+        
+        # Set default email recipient if sending email but no recipient specified
+        if send_email and not recipient_email:
+            recipient_email = "billenewman4@gmail.com"  # Default recipient
+            print(f"No recipient email provided, defaulting to {recipient_email}")
+        
         # Optional: Use provided contacts or fetch from sheets
         provided_contacts = data.get('contacts')
         if provided_contacts:
@@ -109,12 +118,24 @@ def process_contacts():
         if not is_test and processed_contacts:
             update_sheet_with_contact_info(SPREADSHEET_ID, RANGE_NAME, processed_contacts)
         
+        # Send email if requested
+        email_sent = False
+        if send_email and processed_contacts:
+            email_sent = send_contacts_email(
+                contacts=processed_contacts,
+                recipient_email=recipient_email,
+                subject=data.get('email_subject', f"Contact Information CSV - {datetime.now().strftime('%Y-%m-%d')}"),
+                body=data.get('email_body')
+            )
+        
         return jsonify({
             'status': 'success',
             'mode': 'TEST' if is_test else 'PRODUCTION',
             'processed_count': len(processed_contacts),
             'contacts': processed_contacts,
-            'csv_path': output_path
+            'csv_path': output_path,
+            'email_sent': email_sent,
+            'recipient_email': recipient_email if send_email else None
         })
         
     except Exception as e:
@@ -134,8 +155,10 @@ def process_and_email():
         email_template = data.get('email_template')
         recipient_email = data.get('recipient_email')
         
+        # Set default email recipient if none provided
         if not recipient_email:
-            return jsonify({'status': 'error', 'message': 'Recipient email is required'}), 400
+            recipient_email = "billenewman4@gmail.com"  # Default recipient
+            print(f"No recipient email provided, defaulting to {recipient_email}")
         
         # Fetch contacts from Google Sheets
         contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
@@ -170,102 +193,82 @@ def process_and_email():
 def download_csv(filename):
     """Download a previously generated CSV file"""
     try:
-        logs_dir = 'logs'
-        file_path = os.path.join(logs_dir, filename)
-        
+        # Locate file
+        file_path = os.path.join(tempfile.gettempdir(), filename)
         if not os.path.exists(file_path):
             return jsonify({'status': 'error', 'message': 'File not found'}), 404
-            
-        return send_file(file_path, as_attachment=True, download_name=filename)
-        
+        return send_file(file_path, as_attachment=True)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # Helper to generate a random string
 def generate_random_string(length=10):
+    """Generate a random string of fixed length"""
     return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(length))
 
 # Helper function to create contact CSV
 def create_contact_csv(contacts, filename=None):
     """Create a CSV file with contact information"""
+    from CSV_Export.file_manager import save_emails_to_csv
+    # Generate filename if not provided
     if not filename:
-        # Create filename with timestamp
-        filename = f"contacts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"contacts_{timestamp}.csv"
     
-    # Ensure logs directory exists
-    logs_dir = 'logs'
-    os.makedirs(logs_dir, exist_ok=True)
-    
-    # Create full path
+    # Ensure it's a full path
     if not os.path.isabs(filename):
-        path = os.path.join(logs_dir, filename)
-    else:
-        path = filename
+        filename = os.path.join(tempfile.gettempdir(), filename)
     
-    # Save emails to CSV
-    save_emails_to_csv(contacts, path)
+    # Create the CSV
+    save_emails_to_csv(contacts, filename)
     
-    return path
+    return filename
 
-# Add app.yaml configuration for Google Cloud
+# Create app.yaml file for Google Cloud deployment
 def create_app_yaml():
     """Create app.yaml file for Google Cloud deployment"""
-    yaml_content = """
-# app.yaml for Google Cloud App Engine deployment
-runtime: python39
+    app_yaml_content = """runtime: python39
+instance_class: F1
+automatic_scaling:
+  min_instances: 0
+  max_instances: 1
+  min_idle_instances: 0
+  max_idle_instances: 1
 entrypoint: gunicorn -b :$PORT api_flask:app
 
 env_variables:
-  PYTHONUNBUFFERED: 1
-
-handlers:
-- url: /.*
-  script: auto
-
-automatic_scaling:
-  min_instances: 1
-  max_instances: 5
-  min_idle_instances: 1
-  max_idle_instances: 1
-  min_pending_latency: 30ms
-  max_pending_latency: 100ms
-  target_cpu_utilization: 0.65
+  PORT: "8080"
+  PYTHONPATH: "."
+  GOOGLE_APPLICATION_CREDENTIALS: "credentials.json"
 """
-    
-    with open('app.yaml', 'w') as f:
-        f.write(yaml_content)
-    
-    print("Created app.yaml file for Google Cloud deployment")
-    return yaml_content
 
-# Run the Flask application - this is for both local development and Cloud Run
+    # Make sure we're writing to project root
+    with open('app.yaml', 'w') as f:
+        f.write(app_yaml_content)
+    
+    print("Created app.yaml for Google Cloud deployment")
+
+# Create requirements.txt file
+def create_requirements_txt():
+    """Create requirements.txt for Google Cloud deployment"""
+    requirements_content = """flask==2.0.1
+gunicorn==20.1.0
+google-api-python-client==2.19.1
+google-auth-httplib2==0.1.0
+google-auth-oauthlib==0.4.6
+python-dotenv==0.19.0
+requests==2.26.0
+"""
+
+    # Make sure we're writing to project root
+    with open('requirements.txt', 'w') as f:
+        f.write(requirements_content)
+    
+    print("Created requirements.txt for Google Cloud deployment")
+
 if __name__ == '__main__':
     # Get port from environment variable or default to 8080
     port = int(os.environ.get('PORT', 8080))
+    
+    # Run the app
     app.run(host='0.0.0.0', port=port, debug=False)
-
-# Helper function to create a Contact CSV without sending an email
-def create_contact_csv(contacts: List[Contact], output_file: str = None) -> str:
-    """Create a CSV file with contact information"""
-    # Create 'logs' directory if it doesn't exist and output_file is not specified
-    if not output_file:
-        logs_dir = 'logs'
-        if not os.path.exists(logs_dir):
-            os.makedirs(logs_dir)
-        output_file = os.path.join(logs_dir, f'contacts_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv')
-    
-    try:
-        save_emails_to_csv(contacts)  # Use existing function
-        return output_file
-    except Exception as e:
-        print(f"Error creating CSV file: {str(e)}")
-        return ""
-
-if __name__ == '__main__':
-    # Create deployment files
-    create_app_yaml()
-    create_requirements_txt()
-    
-    # Start Flask app
-    print("Starting Flask API server on port 5001...")
-    app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5001)))

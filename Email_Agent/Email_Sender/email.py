@@ -1,7 +1,7 @@
 """  
 Module for sending emails with contact information as a CSV attachment.  
 """  
-import os  
+import os
 import csv  
 import smtplib  
 import tempfile  
@@ -11,10 +11,10 @@ from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart  
 from email.mime.text import MIMEText  
 from typing import List  
-from dotenv import load_dotenv  
   
-# Import Contact class from the Classes directory  
-from Classes.contacts import Contact  
+# Import Contact class and get_secret function
+from Classes.contacts import Contact
+from secrets import get_secret
   
 def send_contacts_email(contacts: List[Contact], recipient_email: str, subject: str = None, body: str = None) -> bool:  
     """  
@@ -26,19 +26,16 @@ def send_contacts_email(contacts: List[Contact], recipient_email: str, subject: 
     :param body: Body of the email (default: generic message)  
     :return: True if email was sent successfully, False otherwise  
     """  
-    # Load environment variables for email credentials  
-    load_dotenv()  
-    
-    # Get email configuration from environment variables  
-    smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')  
-    smtp_port = int(os.getenv('SMTP_PORT', 587))  
-    sender_email = os.getenv('EMAIL_USER')  
-    sender_password = os.getenv('EMAIL_PASSWORD')  
+    # Get email configuration using get_secret function
+    smtp_server = get_secret('SMTP_SERVER') or 'smtp.gmail.com'
+    smtp_port = int(get_secret('SMTP_PORT') or 587)
+    sender_email = get_secret('EMAIL_USER')
+    sender_password = get_secret('EMAIL_PASS')  # Using EMAIL_PASS as in your .env file
     
     # Validate email credentials  
     if not all([sender_email, sender_password]):  
         print("ERROR: Email credentials not found in environment variables.")  
-        print("Please set EMAIL_USER and EMAIL_PASSWORD in your .env file.")  
+        print("Please set EMAIL_USER and EMAIL_PASS in your .env file.")  
         return False  
     
     # Set default subject and body if not provided  
@@ -110,10 +107,15 @@ Customer Discovery Bot
             # Add attachment to message  
             msg.attach(part)  
         
-        # Connect to server and send email  
+        # Connect to server and send email
+        print(f"Connecting to SMTP server: {smtp_server}:{smtp_port}")  
         with smtplib.SMTP(smtp_server, smtp_port) as server:  
+            server.set_debuglevel(1)  # Enable verbose debug output
+            print("Starting TLS...")  
             server.starttls()  # Secure the connection  
+            print(f"Logging in as {sender_email}...")  
             server.login(sender_email, sender_password)  
+            print("Sending email message...")  
             server.send_message(msg)  
         
         print(f"Email sent successfully to {recipient_email} with {len(contacts)} contacts attached.")  

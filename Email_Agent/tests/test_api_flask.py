@@ -70,10 +70,10 @@ def test_root_endpoint(client):
     assert 'timestamp' in data
 
 @patch('api_flask.read_contacts_from_sheets')
-def test_get_contacts_endpoint(mock_read_contacts, client, mock_contacts):
+def test_get_contacts_endpoint(mock_read_contacts, client, mock_contacts_dict):
     """Test the /contacts endpoint for retrieving contacts"""
     # Setup mock
-    mock_read_contacts.return_value = mock_contacts
+    mock_read_contacts.return_value = mock_contacts_dict
     
     # Make request
     response = client.get('/contacts?spreadsheet_id=test_id&range_name=Sheet1!A1:I10&limit=10')
@@ -90,24 +90,30 @@ def test_get_contacts_endpoint(mock_read_contacts, client, mock_contacts):
     assert len(data['contacts']) == 2
 
 @patch('api_flask.process_all_contacts')
-def test_process_contacts_endpoint(mock_process, client, mock_contacts):
+def test_process_contacts_endpoint(mock_process, client, mock_contacts_dict):
     """Test the /process endpoint for processing contacts"""
     # Setup mock
-    mock_process.return_value = mock_contacts
+    mock_process.return_value = mock_contacts_dict
     
-    # Create test data
-    test_data = [
-        {
-            'full_name': 'John Doe',
-            'work_email': 'john.doe@example.com',
-            'company_name': 'Example Inc.'
-        },
-        {
-            'full_name': 'Jane Smith',
-            'work_email': 'jane.smith@testcompany.com',
-            'company_name': 'Test Company'
-        }
-    ]
+    # Create test data - must be an object, not a list
+    test_data = {
+        'is_test': True,
+        'batch_size': 5,
+        'contact_limit': 10,
+        'email_template': 'Hi {{name}}, this is a test email',
+        'contacts': [
+            {
+                'full_name': 'John Doe',
+                'work_email': 'john.doe@example.com',
+                'company_name': 'Example Inc.'
+            },
+            {
+                'full_name': 'Jane Smith',
+                'work_email': 'jane.smith@testcompany.com',
+                'company_name': 'Test Company'
+            }
+        ]
+    }
     
     # Make request
     response = client.post(
@@ -116,6 +122,10 @@ def test_process_contacts_endpoint(mock_process, client, mock_contacts):
         content_type='application/json'
     )
     
+    # Print response data for debugging
+    print(f"Response status: {response.status_code}")
+    print(f"Response data: {response.data}")
+    
     # Check response
     assert response.status_code == 200
     assert mock_process.called
@@ -123,11 +133,11 @@ def test_process_contacts_endpoint(mock_process, client, mock_contacts):
 @patch('api_flask.send_contacts_email')
 @patch('api_flask.process_all_contacts')
 @patch('api_flask.read_contacts_from_sheets')
-def test_send_email_endpoint(mock_read_sheets, mock_process, mock_send_email, client, mock_contacts):
+def test_send_email_endpoint(mock_read_sheets, mock_process, mock_send_email, client, mock_contacts_dict):
     """Test the /process-and-email endpoint"""
     # Setup mocks
-    mock_read_sheets.return_value = mock_contacts
-    mock_process.return_value = mock_contacts  # Mock async function
+    mock_read_sheets.return_value = mock_contacts_dict
+    mock_process.return_value = mock_contacts_dict  # Mock async function
     mock_send_email.return_value = True
     
     # Create test data
@@ -162,11 +172,11 @@ def test_send_email_endpoint(mock_read_sheets, mock_process, mock_send_email, cl
 @patch('api_flask.send_contacts_email')
 @patch('api_flask.process_all_contacts')
 @patch('api_flask.read_contacts_from_sheets')
-def test_send_email_endpoint_failure(mock_read_sheets, mock_process, mock_send_email, client, mock_contacts):
+def test_send_email_endpoint_failure(mock_read_sheets, mock_process, mock_send_email, client, mock_contacts_dict):
     """Test the /process-and-email endpoint with a failure"""
     # Setup mocks
-    mock_read_sheets.return_value = mock_contacts
-    mock_process.return_value = mock_contacts
+    mock_read_sheets.return_value = mock_contacts_dict
+    mock_process.return_value = mock_contacts_dict
     mock_send_email.return_value = False  # Email sending fails
     
     # Create test data
