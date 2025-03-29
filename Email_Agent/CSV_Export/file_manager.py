@@ -76,19 +76,24 @@ def save_email_to_csv(name, email, subject, body):
         print(f"Error saving email to CSV: {str(e)}")
         return False
 
-def save_emails_to_csv(contacts: List[Contact]):
+def save_emails_to_csv(contacts: List[Contact], output_file=None):
     """
     Save multiple email details to a CSV file at once.
     
     :param contacts: List of Contact objects with draft emails
+    :param output_file: Optional file path for output (used in testing)
+    :return: Path to the created CSV file
     """
     # Create 'logs' directory if it doesn't exist
     logs_dir = 'logs'
-    if not os.path.exists(logs_dir):
+    if not os.path.exists(logs_dir) and output_file is None:
         os.makedirs(logs_dir)
     
-    # Create filename with current date
-    filename = os.path.join(logs_dir, f'bulk_email_log_{datetime.now().strftime("%Y-%m-%d")}.csv')
+    # Create filename with current date or use provided output file
+    if output_file:
+        filename = output_file
+    else:
+        filename = os.path.join(logs_dir, f'bulk_email_log_{datetime.now().strftime("%Y-%m-%d")}.csv')
     
     # Check if file exists to determine if we need to write headers
     file_exists = os.path.isfile(filename)
@@ -115,7 +120,7 @@ def save_emails_to_csv(contacts: List[Contact]):
                     })
             
         print(f"All emails saved to {filename}")
-        return True
+        return filename
     except Exception as e:
         print(f"Error saving emails to CSV: {str(e)}")
-        return False
+        return None

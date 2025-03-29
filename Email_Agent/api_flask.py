@@ -48,6 +48,11 @@ class ContactJSONEncoder(json.JSONEncoder):
 # Register the custom encoder with Flask
 app.json_encoder = ContactJSONEncoder
 
+@app.route('/', methods=['GET'])
+def root():
+    """Root endpoint for health checks"""
+    return jsonify({'status': 'online', 'service': 'Customer Discovery Bot', 'timestamp': datetime.now().isoformat()})
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint for Google Cloud deployment"""
@@ -180,6 +185,28 @@ def download_csv(filename):
 def generate_random_string(length=10):
     return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(length))
 
+# Helper function to create contact CSV
+def create_contact_csv(contacts, filename=None):
+    """Create a CSV file with contact information"""
+    if not filename:
+        # Create filename with timestamp
+        filename = f"contacts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    
+    # Ensure logs directory exists
+    logs_dir = 'logs'
+    os.makedirs(logs_dir, exist_ok=True)
+    
+    # Create full path
+    if not os.path.isabs(filename):
+        path = os.path.join(logs_dir, filename)
+    else:
+        path = filename
+    
+    # Save emails to CSV
+    save_emails_to_csv(contacts, path)
+    
+    return path
+
 # Add app.yaml configuration for Google Cloud
 def create_app_yaml():
     """Create app.yaml file for Google Cloud deployment"""
@@ -203,35 +230,19 @@ automatic_scaling:
   min_pending_latency: 30ms
   max_pending_latency: 100ms
   target_cpu_utilization: 0.65
-    """
+"""
     
     with open('app.yaml', 'w') as f:
         f.write(yaml_content)
     
     print("Created app.yaml file for Google Cloud deployment")
+    return yaml_content
 
-# Create requirements.txt file for Google Cloud deployment
-def create_requirements_txt():
-    """Create requirements.txt file for Google Cloud deployment"""
-    requirements = """
-# Requirements for Google Cloud deployment
-flask==2.0.1
-gunicorn==20.1.0
-asyncio==3.4.3
-python-dotenv==0.19.0
-google-api-python-client==2.23.0
-google-auth==2.3.0
-google-auth-httplib2==0.1.0
-langchain==0.0.267
-langchain-openai==0.0.5
-pydantic==1.10.8
-tavily-python==0.1.9
-    """
-    
-    with open('requirements.txt', 'w') as f:
-        f.write(requirements)
-    
-    print("Created requirements.txt file for Google Cloud deployment")
+# Run the Flask application - this is for both local development and Cloud Run
+if __name__ == '__main__':
+    # Get port from environment variable or default to 8080
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
 
 # Helper function to create a Contact CSV without sending an email
 def create_contact_csv(contacts: List[Contact], output_file: str = None) -> str:

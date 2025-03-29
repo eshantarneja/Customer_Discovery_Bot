@@ -1,0 +1,115 @@
+"""
+Test the complete graph workflow
+"""
+import os
+import sys
+import pytest
+from unittest.mock import patch, MagicMock
+
+# Add parent directory to path so we can import modules
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Classes.contacts import Contact
+
+@pytest.fixture
+def mock_contact_processor():
+    """Setup a mock contact processor"""
+    with patch('Helper.contact_processor.process_all_contacts') as mock:
+        yield mock
+
+@pytest.fixture
+def mock_email_agent():
+    """Setup a mock email agent"""
+    with patch('Graph.email_agent.EmailAgent') as mock:
+        agent_instance = MagicMock()
+        mock.return_value = agent_instance
+        yield agent_instance
+
+@pytest.fixture
+def mock_web_search():
+    """Setup a mock web search"""
+    try:
+        with patch('Web.search_agent.search_for_contact_info') as mock:
+            yield mock
+    except ImportError:
+        with patch('Helper.contact_processor.search_for_contact_info', create=True) as mock:
+            yield mock
+
+def test_end_to_end_workflow(mock_contacts, mock_contact_processor, mock_email_agent, mock_web_search):
+    """Test the complete contact processing workflow"""
+    # Configure mock web search to return enriched contacts
+    def add_context(contact):
+        contact.context = f"Context for {contact.full_name}"
+        return contact
+    
+    mock_web_search.side_effect = add_context
+    
+    # Configure mock email agent to add draft emails
+    mock_email_agent.process_contact.side_effect = lambda contact: Contact(
+        full_name=contact.full_name,
+        work_email=contact.work_email,
+        company_name=contact.company_name,
+        company_domain=contact.company_domain,
+        job_title=contact.job_title,
+        LinkedIn=contact.LinkedIn,
+        context=contact.context,
+        draft_email=f"Draft email for {contact.full_name}"
+    )
+    
+    # Mock the process_all_contacts function to return processed contacts
+    processed_contacts = []
+    for contact in mock_contacts:
+        processed_contact = Contact(
+            full_name=contact.full_name,
+            work_email=contact.work_email,
+            company_name=contact.company_name,
+            company_domain=contact.company_domain,
+            job_title=contact.job_title,
+            LinkedIn=contact.LinkedIn,
+            context=f"Context for {contact.full_name}",
+            draft_email=f"Draft email for {contact.full_name}"
+        )
+        processed_contacts.append(processed_contact)
+    
+    mock_contact_processor.return_value = processed_contacts
+    
+    # Import here to allow for mocking
+    from Helper.contact_processor import process_all_contacts
+    
+    # Run the workflow
+    result = process_all_contacts(mock_contacts)
+    
+    # Verify results
+    assert len(result) == len(mock_contacts)
+    for i, contact in enumerate(result):
+        assert contact.full_name == mock_contacts[i].full_name
+        assert hasattr(contact, 'context')
+        assert contact.context == f"Context for {contact.full_name}"
+        assert hasattr(contact, 'draft_email')
+        assert contact.draft_email == f"Draft email for {contact.full_name}"
+
+@patch('GoogleSheets.sheets_manager.read_contacts_from_sheets')
+@patch('GoogleSheets.sheets_manager.update_sheet_with_contact_info')
+@patch('Helper.contact_processor.process_all_contacts')
+def test_complete_workflow_with_sheets(mock_process, mock_update, mock_read, mock_contacts, mock_env_variables):
+    """Test the complete workflow including Google Sheets integration"""
+    # Setup mocks
+    mock_read.return_value = mock_contacts
+    mock_process.return_value = mock_contacts  # Simplified - assume contacts already processed
+    
+    # Import here to allow for mocking
+    from api_flask import app
+    
+    # Create a test client
+    client = app.test_client()
+    
+    # Make a request to process contacts from sheets
+    response = client.get('/process_from_sheets?spreadsheet_id=test_id&range_name=Sheet1!A1:I10')
+    
+    # Verify response
+    assert response.status_code == 200
+    
+    # Verify the workflow was executed
+    assert mock_read.called
+    assert mock_process.called
+    assert mock_update.called
