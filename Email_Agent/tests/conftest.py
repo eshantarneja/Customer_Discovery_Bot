@@ -58,8 +58,19 @@ def temp_csv_file():
 @pytest.fixture
 def mock_env_variables(monkeypatch):
     """Set mock environment variables for testing"""
+    # Set DEBUG to true to ensure we use environment variables, not Secret Manager
+    monkeypatch.setenv("DEBUG", "true")
+    
+    # Email configuration
     monkeypatch.setenv("SMTP_SERVER", "smtp.mockserver.com")
     monkeypatch.setenv("SMTP_PORT", "587")
     monkeypatch.setenv("EMAIL_USER", "test@example.com")
     monkeypatch.setenv("EMAIL_PASSWORD", "mock_password")
+    
+    # API keys
     monkeypatch.setenv("OpenAPI_KEY", "mock-openai-api-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "mock-openai-api-key")
+    monkeypatch.setenv("TAVILY_API_KEY", "mock-tavily-api-key")
+    
+    # Default email settings
+    monkeypatch.setenv("DEFAULT_EMAIL_RECIPIENT", "billenewman4@gmail.com")

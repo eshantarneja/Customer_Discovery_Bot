@@ -2,7 +2,7 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.chains import LLMChain
 import os
-from secrets import get_secret
+from Helper.get_secrets import get_secret
 from dotenv import load_dotenv
 from Classes.contacts import Contact
 
@@ -75,28 +75,54 @@ class EmailAgent:
             prompt=email_prompt
         )
 
+    def extract_experiences(self, name, company, context):
+        """
+        Extract key experiences and achievements from the context
+        """
+        response = self.experience_chain.invoke({
+            "name": name,
+            "company": company,
+            "context": context
+        })
+        return response.get('text', '')
+        
+    def extract_relevant_content(self, context):
+        """
+        Extract relevant content from web search context
+        """
+        # This is a simplification - just return the context for now
+        return context
+    
+    def draft_email(self, name, company, experiences):
+        """
+        Draft an email for the given contact
+        """
+        response = self.email_chain.invoke({
+            "name": name,
+            "company": company,
+            "experiences": experiences
+        })
+        return response.get('text', '')
+    
     async def process_contact(self, contact: Contact):
         """
         Process a contact asynchronously
         """
         try:
             # Run the experience chain
-            experience_response = await self.experience_chain.ainvoke({
-                "name": contact.full_name,
-                "company": contact.company_name,
-                "context": contact.context
-            })
-            experiences = experience_response.get('text', '')
+            experiences = self.extract_experiences(
+                name=contact.full_name,
+                company=contact.company_name,
+                context=contact.context
+            )
             contact.context += experiences
-            #print(f"In email agent, contacts context: {contact.context}")
 
             # Run the email chain
-            email_response = await self.email_chain.ainvoke({
-                "name": contact.full_name,
-                "company": contact.company_name,
-                "experiences": experiences
-            })
-            email_body = email_response.get('text', '')
+            email_body = self.draft_email(
+                name=contact.full_name,
+                company=contact.company_name,
+                experiences=experiences
+            )
             contact.draft_email = email_body
 
             print(f"In email agent, draft email: {contact.draft_email}")

@@ -14,7 +14,7 @@ from typing import List
   
 # Import Contact class and get_secret function
 from Classes.contacts import Contact
-from secrets import get_secret
+from Helper.get_secrets import get_secret
   
 def send_contacts_email(contacts: List[Contact], recipient_email: str, subject: str = None, body: str = None) -> bool:  
     """  

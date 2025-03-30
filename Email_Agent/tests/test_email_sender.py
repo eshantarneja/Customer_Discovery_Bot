@@ -81,11 +81,22 @@ def test_send_contacts_email_error(mock_smtp, mock_contacts, mock_env_variables)
     # Verify result
     assert result is False
 
-def test_send_contacts_email_missing_credentials(mock_contacts, monkeypatch):
+@patch('Email_Sender.email.get_secret')
+def test_send_contacts_email_missing_credentials(mock_get_secret, mock_contacts):
     """Test handling missing email credentials"""
-    # Unset environment variables
-    monkeypatch.delenv("EMAIL_USER", raising=False)
-    monkeypatch.delenv("EMAIL_PASSWORD", raising=False)
+    # Set specific return values for different keys
+    def mock_side_effect(key):
+        if key == 'EMAIL_USER':
+            return None
+        elif key == 'EMAIL_PASS':
+            return None
+        elif key == 'SMTP_SERVER':
+            return 'smtp.gmail.com'
+        elif key == 'SMTP_PORT':
+            return '587'
+        return 'mock_value'
+    
+    mock_get_secret.side_effect = mock_side_effect
     
     # Call function
     result = send_contacts_email(

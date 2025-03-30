@@ -1,6 +1,6 @@
 import os
 import json
-from secrets import get_secret
+from Helper.get_secrets import get_secret
 from tavily import TavilyClient
 import asyncio
 import aiohttp

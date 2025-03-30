@@ -11,9 +11,8 @@ import asyncio
 # Import application modules with correct paths
 from Classes.contacts import Contact
 from Graph.email_agent import EmailAgent
-# Import our custom secrets module with a different name to avoid conflicts
-import secrets as custom_secrets
-from secrets import get_secret as get_app_secret
+# Import our consolidated secrets management module
+from Helper.get_secrets import get_secret
 from CSV_Export.file_manager import save_emails_to_csv
 from GoogleSheets.sheets_manager import read_contacts_from_sheets, update_sheet_with_contact_info
 from Helper.contact_processor import process_all_contacts
@@ -105,6 +104,9 @@ def process_contacts():
             email_template = request.args.get('email_template', None)
             send_email = request.args.get('send_email', 'false').lower() == 'true'
             recipient_email = request.args.get('recipient_email', None)
+            
+            # Read contacts from Google Sheets for GET requests
+            contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
         else:  # POST
             data = request.json
             is_test = data.get('is_test', False)
@@ -120,10 +122,6 @@ def process_contacts():
             else:
                 # Otherwise read from Google Sheets
                 contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
-        
-        # If GET or no contacts in POST data, read from Google Sheets
-        if request.method == 'GET' or ('contacts' not in data if request.method == 'POST' else True):
-            contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
         
         # Process the contacts
         processed_contacts = asyncio.run(process_all_contacts(contacts, batch_size, email_template))
@@ -186,6 +184,9 @@ def process_and_email():
             recipient_email = request.args.get('recipient_email', None)
             email_subject = request.args.get('email_subject', f"Contact Processing Results - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             email_body = request.args.get('email_body', "Attached is a CSV file containing processed contacts with draft emails.")
+            
+            # Read contacts from Google Sheets for GET requests
+            contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
         else:  # POST
             data = request.json
             is_test = data.get('is_test', False)
@@ -202,10 +203,6 @@ def process_and_email():
             else:
                 # Otherwise read from Google Sheets
                 contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
-        
-        # If GET or no contacts in POST data, read from Google Sheets
-        if request.method == 'GET' or ('contacts' not in data if request.method == 'POST' else True):
-            contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
         
         # Process the contacts
         processed_contacts = asyncio.run(process_all_contacts(contacts, batch_size, email_template))
@@ -248,10 +245,39 @@ def process_and_email():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/', methods=['GET'])
+def root():
+    """Root endpoint for service information"""
+    return jsonify({
+        "status": "online",
+        "service": "Customer Discovery Bot",
+        "timestamp": datetime.now().isoformat()
+    })
+
+@app.route('/contacts', methods=['GET'])
+def get_contacts():
+    """Get contacts from Google Sheets"""
+    try:
+        # Get parameters from query string
+        spreadsheet_id = request.args.get('spreadsheet_id', SPREADSHEET_ID)
+        range_name = request.args.get('range_name', RANGE_NAME)
+        limit = int(request.args.get('limit', 100))
+        
+        # Read contacts from Google Sheets
+        contacts = read_contacts_from_sheets(spreadsheet_id, range_name, limit=limit)
+        
+        return jsonify({
+            "status": "success",
+            "count": len(contacts),
+            "contacts": contacts
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint for Google Cloud deployment"""
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
 
 if __name__ == '__main__':
     # Use port 8080 for consistency with the Customer Discovery Bot's expected configuration
