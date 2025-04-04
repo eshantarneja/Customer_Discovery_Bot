@@ -19,10 +19,31 @@ def read_contacts_from_sheets(spreadsheet_id: str, range_name: str, limit: int =
     try:
         # Setup Google Sheets credentials
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-        SERVICE_ACCOUNT_FILE = 'customeroutreach-440901-18943c7c0e95.json'
         
-        credentials = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        # Get credentials from Secret Manager instead of a local file
+        from google.cloud import secretmanager
+        import json
+        
+        # Create the Secret Manager client
+        client = secretmanager.SecretManagerServiceClient()
+        
+        # Access the secret
+        project_id = os.environ.get('GCP_PROJECT_ID', 'primeval-truth-431023-f9')
+        secret_id = 'sheets-service-account'
+        name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+        
+        try:
+            # Access the secret version
+            response = client.access_secret_version(request={"name": name})
+            service_account_info = json.loads(response.payload.data.decode("UTF-8"))
+            
+            # Use the service account info from Secret Manager
+            credentials = service_account.Credentials.from_service_account_info(
+                service_account_info, scopes=SCOPES)
+                
+        except Exception as e:
+            print(f"Error accessing Secret Manager: {e}")
+            raise
         
         # Build the Google Sheets service
         service = build('sheets', 'v4', credentials=credentials)
@@ -95,10 +116,31 @@ def update_sheet_with_contact_info(spreadsheet_id: str, range_name: str, contact
     try:
         # Setup the Sheets API with write permissions
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-        SERVICE_ACCOUNT_FILE = 'customeroutreach-440901-18943c7c0e95.json'
         
-        credentials = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        # Get credentials from Secret Manager instead of a local file
+        from google.cloud import secretmanager
+        import json
+        
+        # Create the Secret Manager client
+        client = secretmanager.SecretManagerServiceClient()
+        
+        # Access the secret
+        project_id = os.environ.get('GCP_PROJECT_ID', 'primeval-truth-431023-f9')
+        secret_id = 'sheets-service-account'
+        name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+        
+        try:
+            # Access the secret version
+            response = client.access_secret_version(request={"name": name})
+            service_account_info = json.loads(response.payload.data.decode("UTF-8"))
+            
+            # Use the service account info from Secret Manager
+            credentials = service_account.Credentials.from_service_account_info(
+                service_account_info, scopes=SCOPES)
+                
+        except Exception as e:
+            print(f"Error accessing Secret Manager: {e}")
+            raise
         
         service = build('sheets', 'v4', credentials=credentials)
         sheet = service.spreadsheets()

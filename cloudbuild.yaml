@@ -1,0 +1,41 @@
+# Substitution variables for local testing
+substitutions:
+  _IMAGE_TAG: latest
+
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/customer-discovery-bot:${_IMAGE_TAG}', './Email_Agent']
+
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/customer-discovery-bot:${_IMAGE_TAG}']
+
+  # Deploy container image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'customer-discovery-bot'
+      - '--image=gcr.io/$PROJECT_ID/customer-discovery-bot:${_IMAGE_TAG}'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--memory=1Gi'
+      - '--cpu=1'
+      - '--port=8080'
+      - '--env-vars-file=./Email_Agent/.env.yaml'
+      - '--timeout=300s'
+      - '--min-instances=1'
+      - '--max-instances=5'
+
+  # We don't need the tag-latest step for local builds since we're already using latest tag
+  # The automatic substitution for _IMAGE_TAG is set to 'latest' by default
+
+# Store the images in Google Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/customer-discovery-bot:${_IMAGE_TAG}'
+
+# Set a longer timeout for the build process (30 minutes)
+timeout: 1800s
