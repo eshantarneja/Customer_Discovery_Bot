@@ -2,14 +2,17 @@
 Module for handling Google Sheets operations.
 """
 import os
+import json
 from typing import List
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from Classes.contacts import Contact
+from Helper.get_secrets import get_secret
 
 def read_contacts_from_sheets(spreadsheet_id: str, range_name: str, limit: int = 100) -> List[Contact]:
     """
     Read contacts from Google Sheets and return as Contact objects.
+    Only returns valid contacts that have required fields and NO draft emails.
     
     :param spreadsheet_id: The ID of the Google Sheet
     :param range_name: The range to read (e.g., 'Sheet1!A2:G100')
@@ -20,30 +23,45 @@ def read_contacts_from_sheets(spreadsheet_id: str, range_name: str, limit: int =
         # Setup Google Sheets credentials
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
         
-        # Get credentials from Secret Manager instead of a local file
-        from google.cloud import secretmanager
-        import json
+        # Get service account JSON using get_secret helper
+        print("DEBUG: Attempting to retrieve SHEETS_SERVICE_ACCOUNT")
+        service_account_json = get_secret('SHEETS_SERVICE_ACCOUNT')
         
-        # Create the Secret Manager client
-        client = secretmanager.SecretManagerServiceClient()
-        
-        # Access the secret
-        project_id = os.environ.get('GCP_PROJECT_ID', 'primeval-truth-431023-f9')
-        secret_id = 'sheets-service-account'
-        name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
-        
-        try:
-            # Access the secret version
-            response = client.access_secret_version(request={"name": name})
-            service_account_info = json.loads(response.payload.data.decode("UTF-8"))
+        if service_account_json:
+            print(f"DEBUG: Retrieved SHEETS_SERVICE_ACCOUNT (length: {len(service_account_json)})")
+            print(f"DEBUG: First 20 chars: {service_account_json[:20]}...")
             
-            # Use the service account info from Secret Manager
-            credentials = service_account.Credentials.from_service_account_info(
-                service_account_info, scopes=SCOPES)
+            try:
+                # Parse the JSON and create credentials
+                service_account_info = json.loads(service_account_json)
+                print("DEBUG: Successfully parsed service account JSON")
                 
-        except Exception as e:
-            print(f"Error accessing Secret Manager: {e}")
-            raise
+                credentials = service_account.Credentials.from_service_account_info(
+                    service_account_info, scopes=SCOPES)
+                print("DEBUG: Successfully created credentials from service account info")
+            except json.JSONDecodeError as json_err:
+                print(f"DEBUG: JSON parsing error: {json_err}")
+                print(f"DEBUG: First 100 chars of service account JSON: {service_account_json[:100]}...")
+                raise
+            except Exception as e:
+                print(f"DEBUG: Error creating credentials: {str(e)}")
+                raise
+        else:
+            print("DEBUG: Failed to retrieve SHEETS_SERVICE_ACCOUNT secret, falling back to local file")
+            
+            # Fallback to local service account file
+            service_account_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                                             "customeroutreach-440901-18943c7c0e95.json")
+            print(f"DEBUG: Looking for file at: {service_account_path}")
+            
+            if os.path.exists(service_account_path):
+                print("DEBUG: Local service account file exists")
+                credentials = service_account.Credentials.from_service_account_file(
+                    service_account_path, scopes=SCOPES)
+                print("DEBUG: Successfully created credentials from local file")
+            else:
+                print("DEBUG: Service account file does not exist")
+                raise FileNotFoundError(f"Service account file not found at {service_account_path}")
         
         # Build the Google Sheets service
         service = build('sheets', 'v4', credentials=credentials)
@@ -79,6 +97,8 @@ def read_contacts_from_sheets(spreadsheet_id: str, range_name: str, limit: int =
         processed = 0
         row_index = 1  # Start after header
 
+        print("# of Values found:", len(values))
+
         while processed < limit and row_index < len(values):
             row = values[row_index]
             # Pad the row with empty strings if needed
@@ -91,9 +111,21 @@ def read_contacts_from_sheets(spreadsheet_id: str, range_name: str, limit: int =
             contact = Contact(row_data)
             
             # Only add valid contacts and increment counter when we actually append
-            if contact.is_valid_contact():
+            # A valid contact must have required fields AND no draft email
+            if contact.is_valid():
                 contacts.append(contact)
                 processed += 1
+                print("Valid contact found:", contact.full_name)
+            #else:
+                # Enhanced debug output - show why contacts are failing validation
+                #has_name = bool(contact.full_name and str(contact.full_name).strip())
+                #has_domain = bool(contact.company_domain and str(contact.company_domain).strip())
+                #has_email = bool(contact.work_email and str(contact.work_email).strip())
+                #has_draft = bool(contact.draft_email and str(contact.draft_email).strip())
+                #print(f"Invalid contact - Name: {contact.full_name} ({has_name}), "
+                #      f"Domain: {contact.company_domain} ({has_domain}), "
+                #      f"Email: {contact.work_email} ({has_email}), "
+                #      f"Has Draft: {has_draft}")
             
             row_index += 1
         
@@ -117,30 +149,44 @@ def update_sheet_with_contact_info(spreadsheet_id: str, range_name: str, contact
         # Setup the Sheets API with write permissions
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
         
-        # Get credentials from Secret Manager instead of a local file
-        from google.cloud import secretmanager
-        import json
+        # Get service account JSON using get_secret helper
+        print("DEBUG: Attempting to retrieve SHEETS_SERVICE_ACCOUNT for update operation")
+        service_account_json = get_secret('SHEETS_SERVICE_ACCOUNT')
         
-        # Create the Secret Manager client
-        client = secretmanager.SecretManagerServiceClient()
-        
-        # Access the secret
-        project_id = os.environ.get('GCP_PROJECT_ID', 'primeval-truth-431023-f9')
-        secret_id = 'sheets-service-account'
-        name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
-        
-        try:
-            # Access the secret version
-            response = client.access_secret_version(request={"name": name})
-            service_account_info = json.loads(response.payload.data.decode("UTF-8"))
+        if service_account_json:
+            print(f"DEBUG: Retrieved SHEETS_SERVICE_ACCOUNT (length: {len(service_account_json)})")
             
-            # Use the service account info from Secret Manager
-            credentials = service_account.Credentials.from_service_account_info(
-                service_account_info, scopes=SCOPES)
+            try:
+                # Parse the JSON and create credentials
+                service_account_info = json.loads(service_account_json)
+                print("DEBUG: Successfully parsed service account JSON")
                 
-        except Exception as e:
-            print(f"Error accessing Secret Manager: {e}")
-            raise
+                credentials = service_account.Credentials.from_service_account_info(
+                    service_account_info, scopes=SCOPES)
+                print("DEBUG: Successfully created credentials from service account info")
+            except json.JSONDecodeError as json_err:
+                print(f"DEBUG: JSON parsing error: {json_err}")
+                print(f"DEBUG: First 100 chars of service account JSON: {service_account_json[:100]}...")
+                raise
+            except Exception as e:
+                print(f"DEBUG: Error creating credentials: {str(e)}")
+                raise
+        else:
+            print("DEBUG: Failed to retrieve SHEETS_SERVICE_ACCOUNT secret, falling back to local file")
+            
+            # Fallback to local service account file
+            service_account_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                                             "customeroutreach-440901-18943c7c0e95.json")
+            print(f"DEBUG: Looking for file at: {service_account_path}")
+            
+            if os.path.exists(service_account_path):
+                print("DEBUG: Local service account file exists")
+                credentials = service_account.Credentials.from_service_account_file(
+                    service_account_path, scopes=SCOPES)
+                print("DEBUG: Successfully created credentials from local file")
+            else:
+                print("DEBUG: Service account file does not exist")
+                raise FileNotFoundError(f"Service account file not found at {service_account_path}")
         
         service = build('sheets', 'v4', credentials=credentials)
         sheet = service.spreadsheets()

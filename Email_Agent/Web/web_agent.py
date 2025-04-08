@@ -5,28 +5,39 @@ from tavily import TavilyClient
 import asyncio
 import aiohttp
 
-# Retrieve Tavily API key
-tavily_api_key = get_secret("TAVILY_API_KEY")
+# Create a lazy-loaded Tavily client
+tavily_client = None
 
-if not tavily_api_key:
-    raise ValueError("Failed to retrieve Tavily API key from Secret Manager")
-
-# Initialize Tavily client
-tavily_client = TavilyClient(api_key=tavily_api_key)
+def get_tavily_client():
+    global tavily_client
+    if tavily_client is None:
+        # Retrieve Tavily API key only when needed
+        tavily_api_key = get_secret("TAVILY_API_KEY")
+        if not tavily_api_key:
+            print("WARNING: Failed to retrieve Tavily API key from Secret Manager")
+            return None
+        # Initialize Tavily client
+        tavily_client = TavilyClient(api_key=tavily_api_key)
+    return tavily_client
 
 async def tavily_search(query, search_depth="advanced", max_results=3, include_raw_content=True):
     """
     Perform a search using Tavily API and get both search results and raw context.
     """
     try:
+        # Get the Tavily client (lazy-loaded)
+        client = get_tavily_client()
+        if not client:
+            print("Cannot perform search: Tavily client initialization failed")
+            return [], ""
+            
         print(f"\nDEBUG: Tavily Search")
-        print(f"API Key: {tavily_api_key[:5]}...")  # Print first 5 chars of API key
         print(f"Query: {query}")
         print(f"Search depth: {search_depth}")
         print(f"Max results: {max_results}")
         
         # Get search results
-        search_response = tavily_client.search(
+        search_response = client.search(
             query=query,
             search_depth=search_depth,
             max_results=max_results,
@@ -47,20 +58,6 @@ async def tavily_search(query, search_depth="advanced", max_results=3, include_r
         print(f"Found {len(results)} results")
         print(f"Raw context length: {len(raw_context)}")
 
-        print("Results")
-        print("\n\n\n\n\n\n\n\n\n\n\n")
-        print("="*50)
-        print(results)
-        print("="*50)
-        print("\n\n\n\n\n\n\n\n\n\n\n")
-
-        print("Raw Context")
-        print("\n\n\n\n\n\n\n\n\n\n\n")
-        print("="*50)
-        print(raw_context)
-        print("="*50)
-        print("\n\n\n\n\n\n\n\n\n\n\n")
-        
         return results, raw_context
         
     except Exception as e:
@@ -80,7 +77,13 @@ def tavily_context_search(query, max_tokens=4000, **kwargs):
     :return: Context string for RAG applications
     """
     try:
-        context = tavily_client.get_search_context(
+        # Get the Tavily client (lazy-loaded)
+        client = get_tavily_client()
+        if not client:
+            print("Cannot perform context search: Tavily client initialization failed")
+            return ""
+            
+        context = client.get_search_context(
             query=query,
             max_tokens=max_tokens,
             **kwargs
@@ -99,12 +102,18 @@ def tavily_extract_content(query, max_results=2):
     :return: Dictionary containing extracted results and failed URLs
     """
     try:
+        # Get the Tavily client (lazy-loaded)
+        client = get_tavily_client()
+        if not client:
+            print("Cannot extract content: Tavily client initialization failed")
+            return {"results": [], "failed_urls": []}
+            
         # First, perform a search to get the URLs
-        search_results = tavily_search(query, max_results=max_results)
-        urls = [result['url'] for result in search_results]
+        search_results = asyncio.run(tavily_search(query, max_results=max_results))[0]
+        urls = [result['url'] for result in search_results if 'url' in result]
         
         # Then, extract content from these URLs
-        response = tavily_client.extract(urls=urls)
+        response = client.extract(urls=urls)
         return response
     except Exception as e:
         print(f"An error occurred during Tavily content extraction: {str(e)}")

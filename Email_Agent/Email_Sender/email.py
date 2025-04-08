@@ -109,16 +109,33 @@ Customer Discovery Bot
         
         # Connect to server and send email
         print(f"Connecting to SMTP server: {smtp_server}:{smtp_port}")  
-        with smtplib.SMTP(smtp_server, smtp_port) as server:  
-            server.set_debuglevel(1)  # Enable verbose debug output
-            print("Starting TLS...")  
-            server.starttls()  # Secure the connection  
-            print(f"Logging in as {sender_email}...")  
-            server.login(sender_email, sender_password)  
-            print("Sending email message...")  
-            server.send_message(msg)  
-        
-        print(f"Email sent successfully to {recipient_email} with {len(contacts)} contacts attached.")  
+        try:
+            with smtplib.SMTP(smtp_server, smtp_port) as server:  
+                server.set_debuglevel(1)  # Enable verbose debug output
+                print("Starting TLS...")  
+                server.starttls()  # Secure the connection  
+                print(f"Logging in as {sender_email}...")  
+                
+                try:
+                    server.login(sender_email, sender_password)  
+                except smtplib.SMTPAuthenticationError as auth_err:
+                    error_msg = str(auth_err)
+                    if "Application-specific password required" in error_msg:
+                        print("ERROR: Gmail requires an application-specific password for this account")
+                        print("Please generate one at: https://myaccount.google.com/apppasswords")
+                        print("Then update EMAIL_PASS in your .env.yaml file with the new app password")
+                        raise Exception("Gmail requires an application-specific password. See logs for details.")
+                    else:
+                        print(f"Authentication error: {error_msg}")
+                        raise Exception(f"Email authentication failed: {error_msg}")
+                        
+                print("Sending email message...")  
+                server.send_message(msg)  
+            
+            print(f"Email sent successfully to {recipient_email} with {len(contacts)} contacts attached.")  
+        except smtplib.SMTPException as smtp_err:
+            print(f"SMTP Error: {str(smtp_err)}")
+            raise Exception(f"SMTP Error: {str(smtp_err)}")
         
         # Clean up the temporary file  
         os.unlink(csv_filename)  

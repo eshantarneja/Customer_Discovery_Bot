@@ -8,6 +8,12 @@ from flask import Flask, request, jsonify, send_file
 import tempfile
 import asyncio
 
+# Import OpenAI for LLM operations
+try:
+    from langchain.chat_models import ChatOpenAI
+except ImportError:
+    print("WARNING: langchain.chat_models not available, LLM functionality may not work")
+
 # Import application modules with correct paths
 from Classes.contacts import Contact
 from Graph.email_agent import EmailAgent
@@ -17,8 +23,11 @@ from CSV_Export.file_manager import save_emails_to_csv
 from GoogleSheets.sheets_manager import read_contacts_from_sheets, update_sheet_with_contact_info
 from Helper.contact_processor import process_all_contacts
 from Email_Sender.email import send_contacts_email
+# Import Tavily search functionality
+from Web.web_agent import tavily_context_search
 
 app = Flask(__name__)
+
 
 # Global variables
 SPREADSHEET_ID = '1xyGHQBRn5dfFG3utdAifs2ubMJtolVK9Qoy9YJGoheg'
@@ -95,9 +104,11 @@ def generate_email():
 @app.route('/process-contacts', methods=['POST', 'GET'])
 def process_contacts():
     """Process contacts and optionally send emails"""
+    print("Starting /process-contacts endpoint execution...")
     try:
         # Get parameters from query string or form data
         if request.method == 'GET':
+            print("Processing GET request for contacts")
             is_test = request.args.get('is_test', 'false').lower() == 'true'
             batch_size = int(request.args.get('batch_size', 5))
             contact_limit = int(request.args.get('contact_limit', 100))
@@ -105,10 +116,55 @@ def process_contacts():
             send_email = request.args.get('send_email', 'false').lower() == 'true'
             recipient_email = request.args.get('recipient_email', None)
             
-            # Read contacts from Google Sheets for GET requests
-            contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
+            print(f"Parameters: is_test={is_test}, batch_size={batch_size}, contact_limit={contact_limit}, send_email={send_email}")
+            
+            try:
+                # Read contacts from Google Sheets for GET requests
+                print("Attempting to read contacts from Google Sheets...")
+                contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
+                print(f"Read {len(contacts) if contacts else 0} valid contacts from Google Sheets")
+                if not contacts:
+                    # We searched the entire sheet but found no valid contacts
+                    print("No valid contacts found that meet all criteria")
+                    return jsonify({
+                        "status": "success",
+                        "message": "Successfully connected to Google Sheets but found no valid contacts. Note: Valid contacts must have full_name, company_domain, work_email AND no draft email.",
+                        "spreadsheet_id": SPREADSHEET_ID,
+                        "valid_found": 0,
+                        "mode": "test" if is_test else "production"
+                    }), 200
+            except Exception as sheet_err:
+                print(f"CRITICAL ERROR - Google Sheets access failed: {str(sheet_err)}")
+                # Print the full traceback for debugging
+                import traceback
+                traceback.print_exc()
+                return jsonify({
+                    "status": "error",
+                    "message": f"Error reading from Google Sheets: {str(sheet_err)}",
+                    "mode": "test" if is_test else "production"
+                }), 500
+                
         else:  # POST
-            data = request.json
+            print("Processing POST request for contacts")
+            # Parse JSON data from the request
+            try:
+                data = request.json
+                if not data:
+                    print("ERROR: No JSON data in the request")
+                    return jsonify({
+                        "status": "error",
+                        "message": "No JSON data provided in the request"
+                    }), 400
+            except Exception as json_err:
+                print(f"CRITICAL ERROR - Failed to parse JSON data: {str(json_err)}")
+                return jsonify({
+                    "status": "error",
+                    "message": f"Invalid JSON data in request: {str(json_err)}"
+                }), 400
+                
+            # Now process the parsed data
+            print(f"Received POST data: {json.dumps(data)[:200]}..." if len(json.dumps(data)) > 200 else json.dumps(data))
+            
             is_test = data.get('is_test', False)
             batch_size = data.get('batch_size', 5)
             contact_limit = data.get('contact_limit', 100)
@@ -116,13 +172,76 @@ def process_contacts():
             send_email = data.get('send_email', False)
             recipient_email = data.get('recipient_email', None)
             
+            print(f"Parameters: is_test={is_test}, batch_size={batch_size}, contact_limit={contact_limit}, send_email={send_email}")
+            
             # If contacts were provided directly in the POST data, use those
             if 'contacts' in data:
-                contacts = [Contact(c) for c in data['contacts']]
+                    print(f"Found {len(data['contacts'])} contacts in POST data")
+                    try:
+                        # Map the incoming fields to what Contact class expects
+                        contact_list = []
+                        for i, c in enumerate(data['contacts']):
+                            # Create properly formatted contact dictionary
+                            contact_dict = {
+                                'Full Name': c.get('name', ''),
+                                'Work Email': c.get('email', ''),
+                                'Company Name': c.get('company', ''),
+                                'Job Title': c.get('position', ''),
+                                'LinkedIn': c.get('linkedin', ''),
+                                'Company Domain': c.get('company_domain', '')
+                            }
+                            print(f"Processing contact {i+1}: {contact_dict['Full Name']} at {contact_dict['Company Name']}")
+                            contact_list.append(Contact(contact_dict))
+                        
+                        contacts = [c for c in contact_list if c.is_valid()]
+                        print(f"Processed {len(contact_list)} contacts, {len(contacts)} are valid")
+                            
+                        if not contacts:
+                            print("ERROR: No valid contacts found in the provided data")
+                            return jsonify({
+                                "status": "error",
+                                "message": "No valid contacts provided in request data. Valid contacts must have full_name, company_domain, work_email AND no draft email.",
+                                "mode": "test" if is_test else "production"
+                            }), 400
+                    except Exception as contact_err:
+                        print(f"CRITICAL ERROR - Contact processing failed: {str(contact_err)}")
+                        import traceback
+                        traceback.print_exc()
+                        return jsonify({
+                            "status": "error",
+                            "message": f"Error processing contact data: {str(contact_err)}",
+                            "mode": "test" if is_test else "production"
+                        }), 400
             else:
                 # Otherwise read from Google Sheets
-                contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
-        
+                print("No contacts in POST data, reading from Google Sheets")
+                try:
+                    print(f"Reading from Google Sheets: {SPREADSHEET_ID}, range: {RANGE_NAME}, limit: {contact_limit}")
+                    contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
+                    print(f"Read {len(contacts) if contacts else 0} valid contacts from Google Sheets")
+                    if not contacts:
+                        print("No valid contacts found in Google Sheets")
+                        return jsonify({
+                            "status": "success",
+                            "message": "Successfully connected to Google Sheets but found no valid contacts. Note: Valid contacts must have full_name, company_domain, work_email AND no draft email.",
+                            "valid_found": 0,
+                            "spreadsheet_id": SPREADSHEET_ID,
+                            "mode": "test" if is_test else "production"
+                        }), 200
+                except Exception as sheet_err:
+                    print(f"CRITICAL ERROR - Google Sheets access failed: {str(sheet_err)}")
+                    import traceback
+                    traceback.print_exc()
+                    return jsonify({
+                        "status": "error",
+                        "message": f"Error reading from Google Sheets: {str(sheet_err)}",
+                        "mode": "test" if is_test else "production"
+                    }), 500
+        # Ensure we only process up to the contact limit
+        if len(contacts) > contact_limit:
+            print(f"Limiting processing to {contact_limit} contacts out of {len(contacts)} fetched")
+            contacts = contacts[:contact_limit]
+            
         # Process the contacts
         processed_contacts = asyncio.run(process_all_contacts(contacts, batch_size, email_template))
         
@@ -177,7 +296,7 @@ def process_and_email():
     try:
         # Get parameters from query string or form data
         if request.method == 'GET':
-            is_test = request.args.get('is_test', 'false').lower() == 'true'
+            is_test = request.args.get('is_test', 'true').lower() == 'true'
             batch_size = int(request.args.get('batch_size', 5))
             contact_limit = int(request.args.get('contact_limit', 100))
             email_template = request.args.get('email_template', None)
@@ -185,11 +304,29 @@ def process_and_email():
             email_subject = request.args.get('email_subject', f"Contact Processing Results - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             email_body = request.args.get('email_body', "Attached is a CSV file containing processed contacts with draft emails.")
             
-            # Read contacts from Google Sheets for GET requests
-            contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
+            try:
+                # Read contacts from Google Sheets for GET requests
+                contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
+                if not contacts:
+                    # We searched the entire sheet but found no valid contacts
+                    return jsonify({
+                        "status": "success",
+                        "message": "Successfully connected to Google Sheets but found no valid contacts that meet all criteria.",
+                        "total_searched": "entire sheet",
+                        "valid_found": 0,
+                        "mode": "test" if is_test else "production"
+                    }), 200
+            except Exception as sheet_err:
+                print(f"Google Sheets error: {str(sheet_err)}")
+                return jsonify({
+                    "status": "error",
+                    "message": f"Error reading from Google Sheets: {str(sheet_err)}",
+                    "mode": "test" if is_test else "production"
+                }), 500
+                
         else:  # POST
             data = request.json
-            is_test = data.get('is_test', False)
+            is_test = data.get('is_test', True)
             batch_size = data.get('batch_size', 5)
             contact_limit = data.get('contact_limit', 100)
             email_template = data.get('email_template', None)
@@ -199,11 +336,59 @@ def process_and_email():
             
             # If contacts were provided directly in the POST data, use those
             if 'contacts' in data:
-                contacts = [Contact(c) for c in data['contacts']]
+                try:
+                    # Map the incoming fields to what Contact class expects
+                    contact_list = []
+                    for c in data['contacts']:
+                        # Create properly formatted contact dictionary
+                        contact_dict = {
+                            'Full Name': c.get('name', ''),
+                            'Work Email': c.get('email', ''),
+                            'Company Name': c.get('company', ''),
+                            'Job Title': c.get('position', ''),
+                            'LinkedIn': c.get('linkedin', ''),
+                            'Company Domain': c.get('company_domain', '')
+                        }
+                        contact_list.append(Contact(contact_dict))
+                    
+                    contacts = contact_list
+                    if not contacts:
+                        return jsonify({
+                            "status": "error",
+                            "message": "No valid contacts provided in request data",
+                            "mode": "test" if is_test else "production"
+                        }), 400
+                except Exception as contact_err:
+                    print(f"Contact processing error: {str(contact_err)}")
+                    return jsonify({
+                        "status": "error",
+                        "message": f"Error processing contact data: {str(contact_err)}",
+                        "mode": "test" if is_test else "production"
+                    }), 400
             else:
                 # Otherwise read from Google Sheets
-                contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
-        
+                try:
+                    contacts = read_contacts_from_sheets(SPREADSHEET_ID, RANGE_NAME, limit=contact_limit)
+                    if not contacts:
+                        return jsonify({
+                            "status": "success",
+                            "message": "Successfully connected to Google Sheets but found no valid contacts. Note: Valid contacts must have full_name, company_domain, work_email AND no draft email.",
+                            "valid_found": 0,
+                            "spreadsheet_id": SPREADSHEET_ID,
+                            "mode": "test" if is_test else "production"
+                        }), 200
+                except Exception as sheet_err:
+                    print(f"Google Sheets error: {str(sheet_err)}")
+                    return jsonify({
+                        "status": "error",
+                        "message": f"Error reading from Google Sheets: {str(sheet_err)}",
+                        "mode": "test" if is_test else "production"
+                    }), 500
+        # Ensure we only process up to the contact limit
+        if len(contacts) > contact_limit:
+            print(f"Limiting processing to {contact_limit} contacts out of {len(contacts)} fetched")
+            contacts = contacts[:contact_limit]
+            
         # Process the contacts
         processed_contacts = asyncio.run(process_all_contacts(contacts, batch_size, email_template))
         
@@ -263,13 +448,16 @@ def get_contacts():
         range_name = request.args.get('range_name', RANGE_NAME)
         limit = int(request.args.get('limit', 100))
         
-        # Read contacts from Google Sheets
+        # Read contacts from Google Sheets - only valid contacts with NO draft emails
         contacts = read_contacts_from_sheets(spreadsheet_id, range_name, limit=limit)
+        
+        # Convert Contact objects to dictionaries for JSON serialization
+        contact_dicts = [contact.to_dict() for contact in contacts]
         
         return jsonify({
             "status": "success",
             "count": len(contacts),
-            "contacts": contacts
+            "contacts": contact_dicts
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

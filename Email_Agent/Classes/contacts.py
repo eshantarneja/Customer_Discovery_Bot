@@ -25,18 +25,47 @@ class Contact:
         """
         required_fields = ['full_name', 'company_domain', 'work_email']
         
+        # Check required fields - must exist AND be non-empty
+        has_required = True
+        for field in required_fields:
+            value = getattr(self, field, None)
+            if not value or not str(value).strip():
+                has_required = False
+                break
         
-        # Check required fields and draft email status
-        has_required = all(getattr(self, field) for field in required_fields)
+        # Check draft email status - must NOT have a draft email
         has_draft = bool(self.draft_email and str(self.draft_email).strip())
         
         return has_required and not has_draft
-
+        
+    def is_valid(self) -> bool:
+        """
+        Validate that this contact has all required fields AND has no draft email.
+        A valid contact MUST have:
+        1. full_name
+        2. company_domain
+        3. work_email
+        4. NO draft_email
+        """
+        return self.is_valid_contact()
+        
     def to_dict(self):
         """
-        Convert contact to dictionary format for easy export.
+        Convert this Contact object to a dictionary for JSON serialization.
+        This is necessary for Flask's jsonify to work properly with Contact objects.
+        Also used for easy export.
         """
-        return vars(self)
+        return {
+            'match': self.match,
+            'full_name': self.full_name,
+            'job_title': self.job_title,
+            'location': self.location,
+            'company_domain': self.company_domain,
+            'company_name': self.company_name,
+            'LinkedIn': self.LinkedIn,
+            'work_email': self.work_email,
+            'draft_email': self.draft_email
+        }
 
     def to_list(self):
         """
