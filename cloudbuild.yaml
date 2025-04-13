@@ -26,7 +26,7 @@ steps:
       - '--cpu=1'
       - '--port=8080'
       - '--env-vars-file=./Email_Agent/.env.yaml'
-      - '--timeout=300s'
+      - '--timeout=1800s'
       - '--min-instances=1'
       - '--max-instances=5'
 

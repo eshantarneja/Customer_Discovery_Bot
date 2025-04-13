@@ -72,8 +72,13 @@ def test_root_endpoint(client):
 @patch('api_flask.read_contacts_from_sheets')
 def test_get_contacts_endpoint(mock_read_contacts, client, mock_contacts_dict):
     """Test the /contacts endpoint for retrieving contacts"""
-    # Setup mock
-    mock_read_contacts.return_value = mock_contacts_dict
+    # Setup mock to return Contact objects instead of dictionaries
+    # Convert the mock_contacts_dict to Contact objects
+    contact_objects = []
+    for contact_dict in mock_contacts_dict:
+        contact_objects.append(Contact(contact_dict))
+    
+    mock_read_contacts.return_value = contact_objects
     
     # Make request
     response = client.get('/contacts?spreadsheet_id=test_id&range_name=Sheet1!A1:I10&limit=10')
@@ -90,12 +95,18 @@ def test_get_contacts_endpoint(mock_read_contacts, client, mock_contacts_dict):
     assert len(data['contacts']) == 2
 
 @patch('api_flask.process_all_contacts')
-def test_process_contacts_endpoint(mock_process, client, mock_contacts_dict):
+@patch('api_flask.read_contacts_from_sheets')
+def test_process_contacts_endpoint(mock_read_sheets, mock_process, client, mock_contacts_dict):
     """Test the /process endpoint for processing contacts"""
-    # Setup mock
-    mock_process.return_value = mock_contacts_dict
+    # Setup mocks
+    # For process_all_contacts, we need to return Contact objects
+    contact_objects = []
+    for contact_dict in mock_contacts_dict:
+        contact_objects.append(Contact(contact_dict))
     
-    # Create test data - must be an object, not a list
+    mock_process.return_value = contact_objects
+    
+    # Create test data
     test_data = {
         'is_test': True,
         'batch_size': 5,
@@ -103,14 +114,20 @@ def test_process_contacts_endpoint(mock_process, client, mock_contacts_dict):
         'email_template': 'Hi {{name}}, this is a test email',
         'contacts': [
             {
-                'full_name': 'John Doe',
-                'work_email': 'john.doe@example.com',
-                'company_name': 'Example Inc.'
+                'name': 'John Doe',
+                'email': 'john.doe@example.com',
+                'company': 'Example Inc.',
+                'position': 'Software Engineer',
+                'linkedin': 'https://linkedin.com/in/johndoe',
+                'company_domain': 'example.com'
             },
             {
-                'full_name': 'Jane Smith',
-                'work_email': 'jane.smith@testcompany.com',
-                'company_name': 'Test Company'
+                'name': 'Jane Smith',
+                'email': 'jane.smith@testcompany.com',
+                'company': 'Test Company',
+                'position': 'Product Manager',
+                'linkedin': 'https://linkedin.com/in/janesmith',
+                'company_domain': 'testcompany.com'
             }
         ]
     }

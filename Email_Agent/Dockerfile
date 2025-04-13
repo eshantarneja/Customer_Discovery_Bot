@@ -15,5 +15,5 @@ COPY . .
 
 ENV PORT=8080
 
-# Increase timeout to 120 seconds to allow for initialization
-CMD exec gunicorn --bind :$PORT --timeout 120 api_flask:app
+# Increase timeout to 1800 seconds (30 minutes) to match Cloud Run service timeout
+CMD exec gunicorn --bind :$PORT --workers 2 --timeout 1800 --keep-alive 5 --log-level debug api_flask:app

@@ -204,6 +204,7 @@ def update_sheet_with_contact_info(spreadsheet_id: str, range_name: str, contact
         
         # Create a map of work emails to row indices
         email_to_row = {}
+        print(f"DEBUG: Mapping {len(values)} rows from sheet")
         for i, row in enumerate(values):
             if i == 0:  # Skip header row
                 continue
@@ -211,18 +212,26 @@ def update_sheet_with_contact_info(spreadsheet_id: str, range_name: str, contact
             if len(row) >= 8:  # Make sure the row has enough columns for the email
                 email = row[7]  # Work Email is the 8th column (index 7)
                 if email and email.strip():
-                    email_to_row[email.strip()] = i
+                    email_to_row[email.strip()] = i        
+        print(f"DEBUG: Found {len(email_to_row)} valid email mappings in sheet")
         
         # For each contact, update its row if found
         update_count = 0
+        print(f"DEBUG: Attempting to update {len(contacts)} contacts in sheet")
         for contact in contacts:
+            print(f"DEBUG: Processing contact: {contact.full_name} with email: {contact.work_email}")
+            print(f"DEBUG: Draft email present: {bool(contact.draft_email)}, length: {len(str(contact.draft_email)) if contact.draft_email else 0}")
+            if contact.draft_email:
+                print(f"DEBUG: Draft email preview: {str(contact.draft_email)[:100]}...")
             if not contact.work_email or not contact.work_email.strip():
+                print(f"DEBUG: Skipping contact with empty email: {contact.full_name}")
                 continue
                 
             # Find the row index for this contact
             row_index = email_to_row.get(contact.work_email.strip())
             if row_index is None:
-                print(f"Contact with email {contact.work_email} not found in sheet")
+                print(f"DEBUG: Contact with email {contact.work_email} not found in sheet lookup table")
+                print(f"DEBUG: Available emails in sheet: {list(email_to_row.keys())[:5]}...")
                 continue
             
             # Convert row index to A1 notation for the range to update
@@ -264,4 +273,7 @@ def update_sheet_with_contact_info(spreadsheet_id: str, range_name: str, contact
         print(f"Successfully updated {update_count} contacts in Google Sheets")
         
     except Exception as e:
-        print(f"Error updating sheet: {str(e)}")
+        print(f"ERROR updating sheet: {str(e)}")
+        import traceback
+        print("Full error traceback:")
+        traceback.print_exc()

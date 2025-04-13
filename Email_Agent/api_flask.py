@@ -109,7 +109,9 @@ def process_contacts():
         # Get parameters from query string or form data
         if request.method == 'GET':
             print("Processing GET request for contacts")
-            is_test = request.args.get('is_test', 'false').lower() == 'true'
+            is_test_param = request.args.get('is_test', 'false')
+            is_test = is_test_param.lower() == 'true'
+            print(f"DEBUG: Raw is_test parameter: '{is_test_param}', Parsed is_test value: {is_test}")
             batch_size = int(request.args.get('batch_size', 5))
             contact_limit = int(request.args.get('contact_limit', 100))
             email_template = request.args.get('email_template', None)
@@ -400,8 +402,18 @@ def process_and_email():
         csv_path = save_emails_to_csv(processed_contacts, filename)
         
         # Update Google Sheet if not in test mode
+        print(f"DEBUG: About to check is_test value - current value: {is_test}")
         if not is_test:
-            update_sheet_with_contact_info(SPREADSHEET_ID, RANGE_NAME, processed_contacts)
+            print("DEBUG: Not in test mode, updating Google Sheet with processed contacts...")
+            try:
+                update_sheet_with_contact_info(SPREADSHEET_ID, RANGE_NAME, processed_contacts)
+                print("DEBUG: update_sheet_with_contact_info completed successfully")
+            except Exception as sheet_update_err:
+                print(f"ERROR: Failed to update sheet: {str(sheet_update_err)}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print("DEBUG: In test mode, skipping Google Sheet update")
         
         # Default to billenewman4@gmail.com if no recipient specified
         if not recipient_email:
